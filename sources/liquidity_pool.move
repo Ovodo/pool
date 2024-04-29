@@ -141,6 +141,7 @@ module overmind::liquidity_pool {
     // Dependencies
     //==============================================================================================
     use sui::math;
+    use std::debug;
     use std::vector;
     use sui::transfer;
     use sui::object::{Self, UID};
@@ -210,6 +211,29 @@ module overmind::liquidity_pool {
         coin_b: Coin<CoinB>,
         ctx: &mut TxContext
     ): Coin<LPCoin<CoinA, CoinB>> {
+
+        let coin_a_amount = coin::value(&coin_a);
+        let coin_b_amount = coin::value(&coin_b);
+        let lp_coin_liquidity = math::sqrt(coin_a_amount * coin_b_amount);
+        assert!(lp_coin_liquidity>=1000,EInsufficientLiquidity);
+        let provider_value = lp_coin_liquidity-(1000 as u64);
+        let _lp_coin = LPCoin<CoinA, CoinB>{};
+        let supply = balance::create_supply<LPCoin<CoinA, CoinB>>(_lp_coin);
+        let liquidity = balance::increase_supply(&mut supply, lp_coin_liquidity);
+        let provider_coin = balance::split(&mut liquidity, provider_value);
+
+
+        let pool = LiquidityPool<CoinA,CoinB> {
+            id:object::new(ctx),
+            coin_a_balance:coin::into_balance(coin_a),
+            coin_b_balance:coin::into_balance(coin_b),
+            lp_coin_supply:supply,
+            initial_lp_coin_reserve:liquidity
+        };
+
+        // transfer::transfer(provider_coin,tx_context::sender(ctx))
+        transfer::share_object(pool);
+        coin::from_balance(provider_coin,ctx)
         
     }
 
@@ -232,6 +256,23 @@ module overmind::liquidity_pool {
         pool: &mut LiquidityPool<CoinA, CoinB>,
         ctx: &mut TxContext
     ): Coin<LPCoin<CoinA, CoinB>> {
+        assert!(coin::value(&coin_a)>0,EInsufficientLiquidity);
+        assert!(coin::value(&coin_b)>0,EInsufficientLiquidity);
+
+        let coin_a_amount = coin::value(&coin_a);
+        let coin_b_amount = coin::value(&coin_b);
+        let coin_a_balance = coin::into_balance(coin_a);
+        let coin_b_balance = coin::into_balance(coin_b);
+        let amount_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let amount_coin_b_reserve = balance::value(&pool.coin_b_balance);
+        let lp_coins_total_supply = balance::supply_value(&pool.lp_coin_supply);
+        let lp_coins_minted = math::min(coin_a_amount * lp_coins_total_supply / amount_coin_a_reserve,coin_b_amount * lp_coins_total_supply / amount_coin_b_reserve);
+        let liquidity = balance::increase_supply(&mut pool.lp_coin_supply, lp_coins_minted);
+        balance::join(&mut pool.coin_a_balance,coin_a_balance);
+        balance::join(&mut pool.coin_b_balance,coin_b_balance);
+        coin::from_balance(liquidity,ctx)
+
+
 
     }
 
@@ -250,7 +291,23 @@ module overmind::liquidity_pool {
         pool: &mut LiquidityPool<CoinA, CoinB>,
         ctx: &mut TxContext
     ): (Coin<CoinA>, Coin<CoinB>) {
+        let amount_lp_coins = coin::value(&lp_coins_to_redeem);
+        let amount_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let amount_coin_b_reserve = balance::value(&pool.coin_b_balance);
+        let lp_coins_total_supply = balance::supply_value(&pool.lp_coin_supply);
+        let amount_coin_a = amount_lp_coins * amount_coin_a_reserve / lp_coins_total_supply;
+        let amount_coin_b = amount_lp_coins * amount_coin_b_reserve / lp_coins_total_supply;
+        assert!(amount_coin_a>0,EInsufficientLiquidity);
+        assert!(amount_coin_b>0,EInsufficientLiquidity);
+
+        let coin_a = coin::from_balance(balance::split(&mut pool.coin_a_balance,amount_coin_a),ctx);
+        let coin_b = coin::from_balance(balance::split(&mut pool.coin_b_balance,amount_coin_b),ctx);
+        balance::decrease_supply(&mut pool.lp_coin_supply,coin::into_balance(lp_coins_to_redeem));
+
         
+        
+
+        (coin_a,coin_b)
     }
 
     /*
@@ -270,6 +327,29 @@ module overmind::liquidity_pool {
         min_amount_coin_b_out: u64,
         ctx: &mut TxContext
     ): Coin<CoinB> {
+        assert!(coin::value(&coin_a_in) > 0, EInvalidSwapParameters);
+        let prev_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let prev_coin_b_reserve = balance::value(&pool.coin_b_balance);
+
+        let coin_a_amount = coin::value(&coin_a_in);
+        let new_coin_a_reserve = prev_coin_a_reserve + coin_a_amount;
+
+        // Calculate the new amount of CoinB in the liquidity pool after the swap
+        let new_coin_b_reserve = (prev_coin_a_reserve * prev_coin_b_reserve) / new_coin_a_reserve;
+
+        // let optimal_coin_b_out = (prev_coin_b_reserve * coin_a_amount) / prev_coin_a_reserve;
+        let optimal_coin_b_out = prev_coin_b_reserve - new_coin_b_reserve;
+
+        
+        assert!(optimal_coin_b_out >= min_amount_coin_b_out, ESlippageLimitExceeded);
+
+        balance::join(&mut pool.coin_a_balance, coin::into_balance(coin_a_in));
+        let coin_b_out = balance::split(&mut pool.coin_b_balance, optimal_coin_b_out);
+
+        
+        let coin_b = coin::from_balance(coin_b_out,ctx);
+        coin_b
+
         
     }
 
@@ -290,6 +370,28 @@ module overmind::liquidity_pool {
         min_amount_coin_a_out: u64,
         ctx: &mut TxContext
     ): Coin<CoinA> {
+        assert!(coin::value(&coin_b_in) > 0, EInvalidSwapParameters);
+
+        let prev_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let prev_coin_b_reserve = balance::value(&pool.coin_b_balance);
+
+        let coin_b_amount = coin::value(&coin_b_in);
+        let new_coin_b_reserve = prev_coin_b_reserve + coin_b_amount;
+
+        // Calculate the new amount of CoinA in the liquidity pool after the swap
+        let new_coin_a_reserve = (prev_coin_a_reserve * prev_coin_b_reserve) / new_coin_b_reserve;
+
+        // Calculate the optimal amount of CoinA to receive after the swap
+        let optimal_coin_a_out = prev_coin_a_reserve - new_coin_a_reserve;
+
+        assert!(optimal_coin_a_out >= min_amount_coin_a_out, ESlippageLimitExceeded);
+
+        // Adjust reserves
+        balance::join(&mut pool.coin_b_balance, coin::into_balance(coin_b_in));
+        let coin_a_out = balance::split(&mut pool.coin_a_balance, optimal_coin_a_out);
+
+        // Return the received CoinA
+        coin::from_balance(coin_a_out, ctx)
         
     }
 
@@ -310,6 +412,36 @@ module overmind::liquidity_pool {
         pool: &mut LiquidityPool<CoinA, CoinB>,
         ctx: &mut TxContext
     ): Coin<CoinB> {
+
+        let coin_a_mut = coin::balance_mut(max_coin_a_in);
+        let mutt = balance::withdraw_all(coin_a_mut);
+        assert!(balance::value(&mutt) > 0, EInvalidSwapParameters);
+        assert!(amount_coin_b_out > 0, EInvalidSwapParameters);
+
+        let prev_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let prev_coin_b_reserve = balance::value(&pool.coin_b_balance);
+        let new_coin_b_reserve = prev_coin_b_reserve - amount_coin_b_out;
+
+        let max_coin_a_amount = balance::value(&mutt);
+        let new_coin_a_reserve =( prev_coin_a_reserve * prev_coin_b_reserve)/ new_coin_b_reserve;
+
+    
+
+        // Calculate the optimal amount of CoinA to initiate swap
+        let optimal_coin_a = new_coin_a_reserve -  prev_coin_a_reserve ;
+
+        assert!(optimal_coin_a <= max_coin_a_amount, ESlippageLimitExceeded);
+        debug::print(&optimal_coin_a);
+        let coin = balance::split(&mut mutt, optimal_coin_a);
+
+        // Adjust reserves
+        balance::join(&mut pool.coin_a_balance, coin);
+        let coin_b_out = balance::split(&mut pool.coin_b_balance, amount_coin_b_out);
+        let coinn_A = coin::from_balance(mutt,ctx);
+        coin::join(max_coin_a_in,coinn_A);
+
+        // Return the received CoinB
+        coin::from_balance(coin_b_out, ctx)
         
     }   
 
@@ -330,6 +462,32 @@ module overmind::liquidity_pool {
         pool: &mut LiquidityPool<CoinA, CoinB>,
         ctx: &mut TxContext
     ): Coin<CoinA> {
+        let coin_b_mut = coin::balance_mut(max_coin_b_in);
+        let mutt = balance::withdraw_all(coin_b_mut);
+        assert!(balance::value(&mutt) > 0, EInvalidSwapParameters);
+        assert!(amount_coin_a_out > 0, EInvalidSwapParameters);
+
+        let prev_coin_a_reserve = balance::value(&pool.coin_a_balance);
+        let prev_coin_b_reserve = balance::value(&pool.coin_b_balance);
+        let max_coin_b_amount = balance::value(&mutt);
+        let new_coin_a_reserve = prev_coin_a_reserve -  amount_coin_a_out;
+        let new_coin_b_reserve =( prev_coin_a_reserve * prev_coin_b_reserve)/ new_coin_a_reserve;
+
+        let optimal_coin_b = new_coin_b_reserve - prev_coin_b_reserve;
+        
+        assert!(optimal_coin_b <= max_coin_b_amount, ESlippageLimitExceeded);
+        let coin = balance::split(&mut mutt, optimal_coin_b);
+
+
+        // Adjust reserves
+        balance::join(&mut pool.coin_b_balance, coin);
+        let coin_a_out = balance::split(&mut pool.coin_a_balance, amount_coin_a_out);
+        let coinn_B = coin::from_balance(mutt,ctx);
+        coin::join(max_coin_b_in,coinn_B);
+
+
+        // Return the received CoinA
+        coin::from_balance(coin_a_out, ctx)
         
     }
 
