@@ -1,5 +1,5 @@
 # Module
-Module is the base unit of code organization in Move. Modules are used to group and isolate code, and all of the members of the module are private to the module by default. In this section you will learn how to define a module, how to declare its members and how to access them from other modules.
+A Module is the base unit of code organization in Move. Modules are used to group and isolate code, and all of the members of the module are private to the module by default.
 
 ## Module declaration
 Modules are declared using the **module** keyword followed by the package address, module name and the module body inside the curly braces **{}**. The module name should be in snake_case - all lowercase letters with underscores between words. Modules names must be unique in the package.
@@ -27,7 +27,7 @@ module book::my_module_with_members {
 
     // a struct
     public struct Struct {}
-    
+
     // function
     fun function(_: &Struct) { /* function body */ }
 }
