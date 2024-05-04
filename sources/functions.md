@@ -4,13 +4,13 @@ To print out a value in the move language, you can use the print method from the
 ```move
 module example::print_method {
 
-\\ Import necessary dependencies
+\\\ Import necessary dependencies
 use std::debug
 
-\\ declare constants if necessary
+\\\ declare constants if necessary
 const EZeroValueNotAllowed:u64 = 1
 
-\\ Function to print value
+\\\ Function to print value
 public fun print_val(value:u64){
 assert!(value > 0,1)
 debug::print(&value)
