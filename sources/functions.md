@@ -10,7 +10,7 @@ use std::debug
 \\\ declare constants if necessary
 const EZeroValueNotAllowed:u64 = 1
 
-\\\ Function to print value
+
 public fun print_val(value:u64){
 assert!(value > 0,1)
 debug::print(&value)
