@@ -11,7 +11,7 @@ use std::debug
 const EZeroValueNotAllowed:u64 = 1
 
 \\ Function to print value
-fun print_val(value:u64){
+public fun print_val(value:u64){
 assert!(value > 0,1)
 debug::print(&value)
 }
